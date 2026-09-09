@@ -1,1 +1,286 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+  <title>Kaiju vs Mech: WebXR Asymmetric Brawl</title>
+  <!-- A-Frame Library for 3D / WebXR -->
+  <script src="https://aframe.io/releases/1.4.2/aframe.min.js"></script>
+  <!-- PeerJS for WebRTC Peer-to-Peer Networking -->
+  <script src="https://unpkg.com/peerjs@1.5.2/dist/peerjs.min.js"></script>
+  
+  <style>
+    body { margin: 0; overflow: hidden; font-family: sans-serif; }
+    
+    /* Overlay UI Style */
+    #ui-container {
+      position: absolute;
+      top: 0; left: 0; width: 100%; height: 100%;
+      pointer-events: none;
+      z-index: 10;
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+      box-sizing: border-box;
+      padding: 15px;
+    }
+    
+    .interactive { pointer-events: auto; }
+    
+    /* Lobby Overlay */
+    #lobby {
+      position: absolute;
+      top: 0; left: 0; width: 100%; height: 100%;
+      background: rgba(10, 10, 20, 0.9);
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      color: white;
+      z-index: 20;
+    }
 
+    button {
+      padding: 12px 24px;
+      font-size: 18px;
+      font-weight: bold;
+      background: #00e5ff;
+      border: none;
+      border-radius: 8px;
+      cursor: pointer;
+      margin: 8px;
+    }
+
+    input {
+      padding: 10px;
+      font-size: 16px;
+      border-radius: 4px;
+      border: 1px solid #ccc;
+      text-align: center;
+    }
+
+    /* Game HUD */
+    .hud {
+      background: rgba(0,0,0,0.6);
+      color: #fff;
+      padding: 10px 15px;
+      border-radius: 8px;
+      font-weight: bold;
+    }
+
+    #touch-controls {
+      display: none; /* Shown for Mech player */
+      position: absolute;
+      bottom: 20px;
+      width: 100%;
+      display: flex;
+      justify-content: space-between;
+      box-sizing: border-box;
+      padding: 0 30px;
+    }
+
+    .dpad-btn {
+      width: 60px;
+      height: 60px;
+      background: rgba(255,255,255,0.3);
+      border: 2px solid #fff;
+      border-radius: 50%;
+      color: white;
+      font-size: 24px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      user-select: none;
+    }
+  </style>
+</head>
+<body>
+
+  <!-- Game HUD -->
+  <div id="ui-container">
+    <div style="display: flex; justify-content: space-between; width: 100%;">
+      <div class="hud" id="city-hud">City Integrity: 100%</div>
+      <div class="hud" id="kaiju-hud">Kaiju HP: 1000</div>
+    </div>
+
+    <!-- On-screen controls for Mech Mobile player -->
+    <div id="touch-controls" class="interactive">
+      <div style="display: grid; grid-template-columns: repeat(3, 50px); gap: 5px;">
+        <div></div><div class="dpad-btn" id="btn-up">▲</div><div></div>
+        <div class="dpad-btn" id="btn-left">◄</div><div></div><div class="dpad-btn" id="btn-right">►</div>
+        <div></div><div class="dpad-btn" id="btn-down">▼</div><div></div>
+      </div>
+      <button id="btn-fire" style="background: #ff0055; color: white; width: 80px; height: 80px; border-radius: 50%;">FIRE</button>
+    </div>
+  </div>
+
+  <!-- Lobby Window -->
+  <div id="lobby">
+    <h1>KAIJU vs MECH</h1>
+    <p>Select your role to start:</p>
+    <div style="margin-bottom: 20px;">
+      <button class="interactive" onclick="initHost()">Host Game (Kaiju / VR)</button>
+    </div>
+    <div style="display: flex; align-items: center; gap: 10px;">
+      <input type="text" id="room-input" placeholder="Enter Room ID" class="interactive">
+      <button class="interactive" onclick="initClient()">Join Game (Mech / Mobile)</button>
+    </div>
+    <p id="status-text" style="color: #ffca28; margin-top: 15px;"></p>
+  </div>
+
+  <!-- 3D Scene -->
+  <a-scene embedded vr-mode-ui="enabled: true">
+    
+    <a-assets>
+      <!-- Basic colors / textures -->
+    </a-assets>
+
+    <!-- Environment / Ground Grid -->
+    <a-sky color="#0d0f18"></a-sky>
+    <a-plane position="0 0 0" rotation="-90 0 0" width="100" height="100" color="#1a1c23"></a-plane>
+
+    <!-- City Buildings (Destructible Targets) -->
+    <a-entity id="city">
+      <a-box class="building" position="-10 5 -10" width="6" height="10" depth="6" color="#3a415a"></a-box>
+      <a-box class="building" position="10 7 -10" width="6" height="14" depth="6" color="#3a415a"></a-box>
+      <a-box class="building" position="-10 4 10" width="6" height="8" depth="6" color="#3a415a"></a-box>
+      <a-box class="building" position="10 8 10" width="6" height="16" depth="6" color="#3a415a"></a-box>
+    </a-entity>
+
+    <!-- Civilians (Pickups for Mech) -->
+    <a-entity id="civilians">
+      <a-sphere class="civilian" position="-5 0.5 -5" radius="0.5" color="#00ff66"></a-sphere>
+      <a-sphere class="civilian" position="5 0.5 5" radius="0.5" color="#00ff66"></a-sphere>
+    </a-entity>
+
+    <!-- KAIJU PLAYER (Giant Scale) -->
+    <a-entity id="kaiju-rig" position="0 0 0">
+      <a-camera id="kaiju-camera" position="0 15 20" look-controls></a-camera>
+      <!-- VR Controller support -->
+      <a-entity id="left-hand" hand-controls="hand: left"></a-entity>
+      <a-entity id="right-hand" hand-controls="hand: right"></a-entity>
+    </a-entity>
+
+    <!-- MECH PLAYER (Hero) -->
+    <a-entity id="mech" position="0 0.75 0">
+      <!-- Mech Visual (Red Box Hero) -->
+      <a-box width="1.5" height="1.5" depth="1.5" color="#ff2a2a">
+        <a-box position="0 0.5 -0.8" width="0.4" height="0.4" depth="0.8" color="#111"></a-box> <!-- Cannon -->
+      </a-box>
+      <!-- Third-Person Camera attached behind the Mech -->
+      <a-camera id="mech-camera" position="0 4 8" rotation="-20 0 0" active="false"></a-camera>
+    </a-entity>
+
+    <!-- Lights -->
+    <a-ambient-light color="#404040"></a-ambient-light>
+    <a-directional-light position="10 20 15" intensity="0.8"></a-directional-light>
+  </a-scene>
+
+  <script>
+    let peer = null;
+    let conn = null;
+    let isHost = false;
+    let role = null; // 'kaiju' or 'mech'
+
+    const mechEl = document.getElementById('mech');
+    const statusText = document.getElementById('status-text');
+    const lobbyEl = document.getElementById('lobby');
+
+    // --- Networking Logic (PeerJS) ---
+    function generateRoomId() {
+      return Math.floor(1000 + Math.random() * 9000).toString();
+    }
+
+    function initHost() {
+      const roomId = generateRoomId();
+      role = 'kaiju';
+      isHost = true;
+      
+      peer = new Peer(roomId);
+      
+      peer.on('open', (id) => {
+        statusText.innerText = `Room Code: ${id}. Waiting for Mech player to join...`;
+      });
+
+      peer.on('connection', (connection) => {
+        conn = connection;
+        setupNetworking();
+        startGame();
+      });
+    }
+
+    function initClient() {
+      const roomId = document.getElementById('room-input').value.trim();
+      if (!roomId) {
+        alert('Please enter a Room ID');
+        return;
+      }
+      
+      role = 'mech';
+      isHost = false;
+      peer = new Peer();
+
+      peer.on('open', () => {
+        conn = peer.connect(roomId);
+        setupNetworking();
+        conn.on('open', () => {
+          startGame();
+        });
+      });
+    }
+
+    function setupNetworking() {
+      conn.on('data', (data) => {
+        // Handle position updates from the other player
+        if (data.type === 'mech-transform') {
+          mechEl.setAttribute('position', data.position);
+          mechEl.setAttribute('rotation', data.rotation);
+        }
+      });
+    }
+
+    function startGame() {
+      lobbyEl.style.display = 'none';
+
+      if (role === 'mech') {
+        // Switch to Third-Person Mech Camera
+        document.getElementById('mech-camera').setAttribute('active', 'true');
+        document.getElementById('kaiju-camera').setAttribute('active', 'false');
+        setupMechControls();
+      }
+    }
+
+    // --- Mech Mobile Movement & Input ---
+    function setupMechControls() {
+      const speed = 0.3;
+      let pos = { x: 0, y: 0.75, z: 0 };
+
+      function move(dx, dz) {
+        pos.x += dx;
+        pos.z += dz;
+        mechEl.setAttribute('position', `${pos.x} ${pos.y} ${pos.z}`);
+
+        // Send new position to Kaiju player over network
+        if (conn && conn.open) {
+          conn.send({
+            type: 'mech-transform',
+            position: `${pos.x} ${pos.y} ${pos.z}`,
+            rotation: mechEl.getAttribute('rotation')
+          });
+        }
+      }
+
+      // Button listeners
+      document.getElementById('btn-up').addEventListener('click', () => move(0, -speed));
+      document.getElementById('btn-down').addEventListener('click', () => move(0, speed));
+      document.getElementById('btn-left').addEventListener('click', () => move(-speed, 0));
+      document.getElementById('btn-right').addEventListener('click', () => move(speed, 0));
+      
+      document.getElementById('btn-fire').addEventListener('click', () => {
+        console.log("Fire Weapon!");
+        // Add projectile spawning logic here
+      });
+    }
+  </script>
+</body>
+</html>
